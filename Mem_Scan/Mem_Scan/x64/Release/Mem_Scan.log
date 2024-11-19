@@ -1,0 +1,9 @@
+﻿  Mem_Scan.cpp
+C:\Users\Alex\OneDrive\Studium\DHBW\Studienarbeit\wunderschoene_plutovki\Mem_Scan\Mem_Scan.cpp(154,34): warning C4101: 'e': unreferenced local variable
+C:\Users\Alex\OneDrive\Studium\DHBW\Studienarbeit\wunderschoene_plutovki\Mem_Scan\Mem_Scan.cpp(177,38): warning C4101: 'e': unreferenced local variable
+  Generating code
+  2 of 187 functions ( 1.1%) were compiled, the rest were copied from previous compilation.
+    1 functions were new in current compilation
+    2 functions had inline decision re-evaluated but remain unchanged
+  Finished generating code
+  Mem_Scan.vcxproj -> C:\Users\Alex\OneDrive\Studium\DHBW\Studienarbeit\wunderschoene_plutovki\Mem_Scan\x64\Release\Mem_Scan.exe
