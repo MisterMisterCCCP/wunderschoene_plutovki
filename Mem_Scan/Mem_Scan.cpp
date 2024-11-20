@@ -8,6 +8,7 @@
 #include <cwchar>
 #include <vector>
 #include <utility>
+#include <sstream>
 
 // Funktion zur Umwandlung von std::string in wchar_t*
 wchar_t* stringToWideChar(const std::string& str) {
@@ -20,6 +21,63 @@ wchar_t* stringToWideChar(const std::string& str) {
 
     return wideStr; // Zeiger auf das konvertierte wchar_t* zurückgeben
 }
+
+std::vector<std::pair<void*, int>> filter_founded_process_memory(
+    int valueToFindNext,
+    DWORD processID,
+    const std::vector<std::pair<void*, int>> &valuesFromPreviousScan
+) {
+    std::vector<std::pair<void*, int>> foundValues; // Ergebnisliste
+    wprintf(L"Searching for nextValue: %d in process ID: %lu\n", valueToFindNext, processID);
+
+    // Prozess öffnen
+    HANDLE handleToTheProcess = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, processID);
+    if (handleToTheProcess == nullptr) {
+        wprintf(L"Failed to open process. Error: %lu\n", GetLastError());
+        return foundValues;
+    }
+
+    // Über die Ergebnisse aus dem vorherigen Scan iterieren
+    for (const auto& previousResult : valuesFromPreviousScan) {
+        void* address = previousResult.first; // Speicheradresse aus dem vorherigen Scan
+        int previousValue = previousResult.second;
+
+        // Speicherinformationen abrufen
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQueryEx(handleToTheProcess, address, &mbi, sizeof(mbi))) {
+            // Überprüfen, ob der Speicherbereich lesbar ist
+            if (mbi.State == MEM_COMMIT &&
+                (mbi.Protect == PAGE_READWRITE || mbi.Protect == PAGE_READONLY || mbi.Protect == PAGE_WRITECOPY)) {
+
+                // Speicherbereich auslesen
+                int currentValue;
+                SIZE_T bytesRead;
+                if (ReadProcessMemory(handleToTheProcess, address, &currentValue, sizeof(currentValue), &bytesRead)) {
+                    // Prüfen, ob der aktuelle Wert mit dem gesuchten Wert übereinstimmt
+                    if (currentValue == valueToFindNext) {
+                        foundValues.emplace_back(address, currentValue);
+                        wprintf(L"Found matching value: %d at address: 0x%p\n", currentValue, address);
+                    }
+                }
+                else {
+                    wprintf(L"Failed to read memory at address: 0x%p. Error: %lu\n", address, GetLastError());
+                }
+            }
+            else {
+                wprintf(L"Memory at address: 0x%p is not readable. Skipping.\n", address);
+            }
+        }
+        else {
+            wprintf(L"Failed to query memory at address: 0x%p. Error: %lu\n", address, GetLastError());
+        }
+    }
+
+    // Handle des Prozesses schließen
+    CloseHandle(handleToTheProcess);
+
+    return foundValues;
+}
+
 
 std::vector<std::pair<void*, int>> read_and_find_from_process_memory(int valueToFind, DWORD processID) {
     std::vector<std::pair<void*, int>> foundValues; // Ergebnisliste
@@ -52,7 +110,6 @@ std::vector<std::pair<void*, int>> read_and_find_from_process_memory(int valueTo
                     if (*potentialMatch == valueToFind) {
                         // Adresse und Wert speichern
                         foundValues.emplace_back(address + i, *potentialMatch);
-                        wprintf(L"Value found at address: 0x%p with value: %d\n", address + i, *potentialMatch);
                     }
                 }
             }
@@ -134,15 +191,107 @@ DWORD find_process_id(const wchar_t* targetExe) {
     return targetID;
 }
 
-int main(int argc, char* argv[]) {
-    // Überprüfen, ob genug Argumente übergeben wurden
+int main() {
+    std::string input;
+    std::vector<std::pair<void*, int>> results;
+    while (true) {
+        std::cout << "Hello from Mem Scan... enter a command or type ? to find out all commands\n";
+        std::getline(std::cin, input);
+        if (input == "exit") {
+            std::cout << "Exiting program\n";
+            break;
+        }
+        if (input == "?") {
+            std::cout << "<target_process> <read_and_find> <value_to_find>\n";
+            std::cout << "<target_process> <read_and_find> <value_to_find> <next_value_to_find_optional>\n";
+            std::cout << "<target_process> <write_and_save> <value_to_write> <adress_of_the_value_which_becomes_overitten>\n";
+            continue;
+        }
+        // Split input into arguments
+        std::vector<std::string> args;
+        std::string arg;
+        std::istringstream iss(input);
+        while (iss >> arg) {
+            args.push_back(arg);
+        }
+        if (args.size() < 2 || (args[1] == "write_and_save" && args.size() != 4) || ((args[1] == "read_and_find" && args.size() != 4) && (args[1] == "read_and_find" && args.size() != 3))) {
+            std::cerr << "Invalid command. Usage: Type in ? to see valid commands\n";
+            continue;
+        }
+        std::string target = args[0];
+        std::string func = args[1];
+        int value;
+
+        wchar_t* wTarget = stringToWideChar(target);
+        DWORD targetPID = find_process_id(wTarget);
+
+        if (targetPID == 0) {
+            std::cerr << "Error: Could not find process " << target << ".\n";
+            delete[] wTarget;
+            continue;
+        }
+
+        try {
+            value = std::stoi(args[2]);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "Error: <value_for_func> must be an integer.\n";
+            delete[] wTarget;
+            continue;
+        }
+
+        if (func == "read_and_find") {
+            if (args[3].empty()){
+                results = read_and_find_from_process_memory(value, targetPID);
+                for (const std::pair<void*, int>& result : results) {
+                    void* address = result.first;
+                    int foundValue = result.second;
+                    wprintf(L"Found value: %d at address: 0x%p\n", foundValue, address);
+                }
+            }
+            else {
+                int nextValue;
+                try {
+                    nextValue = std::stoi(args[3]);
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error: <next_value_to_find_optional> must be an integer.\n";
+                    delete[] wTarget;
+                    continue;
+                }
+                results = filter_founded_process_memory(nextValue, targetPID, results);
+            }
+        }
+        else if (func == "write_and_save") {
+            void* targetAddress;
+            try {
+                targetAddress = reinterpret_cast<void*>(std::stoull(args[3], nullptr, 16));
+            }
+            catch (const std::exception& e) {
+                std::cerr << "Error: <address_to_write> must be castable to void*.\n";
+                delete[] wTarget;
+                continue;
+            }
+            write_and_save(targetAddress, value, targetPID);
+        }
+        else {
+            std::cerr << "Error: Unknown function '" << func << "'.\n";
+        }
+
+        delete[] wTarget;
+    }
+    return 0;
+}
+
+/**
+// Überprüfen, ob genug Argumente übergeben wurden
     if (argc != 5) {
         std::cerr << "Usage: " << argv[0] << " <target.exe> <func> <value_for_func> <adress_to_write>\n";
         return 1;
     }
     std::string target = argv[1];// Erstes Argument: target.exe
     std::cout << "Target application is: " << target << "\n"; // Ausgabe des Targets
-    wchar_t* wTarget = stringToWideChar(target); 
+    wchar_t* wTarget = stringToWideChar(target);
     DWORD targetPID = find_process_id(wTarget);
     wprintf(L"Das ist die targetPID: %lu von Prozess %ls\n", targetPID, wTarget);
     std::string func = argv[2];  // Zweites Argument: Name der Funktion
@@ -184,10 +333,19 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Unknown function '" << func << "'.\n";
         return 1;
     }
+    Found matching value: 27 at address: 0x0000021E3911EA98
+Found matching value: 27 at address: 0x0000021E3D881930
 
     delete[] wTarget;
     return 0;
-}
+
+
+
+
+
+
+
+*/
 
 
 
